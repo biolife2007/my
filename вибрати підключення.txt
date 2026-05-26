@@ -1,0 +1,3 @@
+Підключись до Prolitech з C:\Users\2ID (Alena)\Documents\GitHub\my\prolitech, використовуй .env_open
+Підключись до ProliMAX з C:\Users\2ID (Alena)\Documents\GitHub\my\prolimax, використовуй .env_max
+Підключись до OneBox з C:\Users\2ID (Alena)\Documents\GitHub\my\onebox, використовуй .env_box
