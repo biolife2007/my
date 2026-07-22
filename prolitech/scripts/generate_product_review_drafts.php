@@ -70,12 +70,39 @@ function dueCount(DateTimeImmutable $now): int
     return min($count, DAILY_LIMIT);
 }
 
-function buildText(string $productName, int $lengthIndex): string
+function buildText(
+    string $productName,
+    string $description,
+    string $categories,
+    int $lengthIndex
+): ?string
 {
     $name = trim(preg_replace('/\s+/u', ' ', $productName) ?? $productName);
-    $normalized = mb_strtolower($name, 'UTF-8');
+    $decodedDescription = html_entity_decode(
+        html_entity_decode($description, ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+        ENT_QUOTES | ENT_HTML5,
+        'UTF-8'
+    );
+    $plainDescription = trim(preg_replace(
+        '/\s+/u',
+        ' ',
+        strip_tags($decodedDescription)
+    ) ?? '');
+    $normalized = mb_strtolower(
+        $name . ' ' . $categories . ' ' . $plainDescription,
+        'UTF-8'
+    );
 
-    if (containsAny($normalized, ['дріждж'])) {
+    if (containsAny($normalized, [
+        'метабісульфіт', 'піросульфіт', 'харчовий консервант',
+        'сульфітац', 'ферменти та інші добавки',
+    ])) {
+        $templates = [
+            "Яке рекомендоване дозування «{$name}» на 10 літрів сусла або вина та на якому етапі його краще вносити?",
+            "«{$name}» застосовують для захисту сусла, вина або соку від окислення та небажаних мікроорганізмів. Для точного використання важливо дотримуватися дозування й враховувати етап виробництва напою.",
+            "Основне призначення «{$name}» — сульфітація та стабілізація напоїв: засіб допомагає обмежити окислення й активність небажаної мікрофлори. Під час застосування особливо важливі точне дозування на заданий об'єм, рівномірне розчинення та дотримання технології конкретного рецепта.",
+        ];
+    } elseif (containsAny($normalized, ['дріждж'])) {
         $templates = [
             "У характеристиках «{$name}» особливо цікаві рекомендована температура бродіння та витрата на один літр сусла.",
             "У випадку з {$name} хотілося б бачити точні дані про допустиму температуру, тривалість бродіння й рекомендований тип сировини. Саме ці параметри найкраще показують, для якого рецепта вони підійдуть.",
@@ -118,11 +145,7 @@ function buildText(string $productName, int $lengthIndex): string
             "В описі {$name} хотілося б бачити робочий діапазон температур, точність регулювання, клас захисту та спосіб монтажу. Для нагрівального обладнання важливі також довжина кабелю й наявність захисту від перегріву. Ці деталі допомагають оцінити не лише продуктивність, а й зручність щоденного використання.",
         ];
     } else {
-        $templates = [
-            "В описі «{$name}» хотілося б бачити точні розміри, матеріал і повну комплектацію.",
-            "Назва {$name} одразу пояснює призначення, але для порівняння бракує конкретики: розмірів, матеріалу, сумісності та переліку того, що входить до комплекту.",
-            "Для {$name} корисно було б додати кілька практичних деталей: точні розміри, матеріал основних частин, комплектацію та обмеження щодо сумісності. Не менш цікаві рекомендації виробника з догляду й типові сценарії застосування. Такий опис допоміг би оцінити товар за конкретними параметрами, а не лише за назвою.",
-        ];
+        return null;
     }
 
     return $templates[$lengthIndex % count($templates)];
@@ -187,6 +210,8 @@ function main(array $argv): int
     $prefix = $env['DB_PREFIX'] ?? '';
     $productTable = quoteIdentifier($prefix . 'product');
     $descriptionTable = quoteIdentifier($prefix . 'product_description');
+    $productToCategoryTable = quoteIdentifier($prefix . 'product_to_category');
+    $categoryDescriptionTable = quoteIdentifier($prefix . 'category_description');
     $reviewTable = quoteIdentifier($prefix . 'review');
     $faqTable = quoteIdentifier($prefix . 'oct_faq');
     $trackingTable = quoteIdentifier($prefix . 'auto_review_draft');
@@ -228,6 +253,50 @@ function main(array $argv): int
     }
 
     try {
+        $repairFaqId = (int)(getenv('REVIEW_DRAFTS_REPAIR_FAQ_ID') ?: 0);
+        if ($repairFaqId > 0) {
+            $repairSelect = $pdo->prepare(
+                "SELECT f.faq_id, pd.name, pd.description,
+                        COALESCE((
+                            SELECT GROUP_CONCAT(DISTINCT cd.name ORDER BY cd.name SEPARATOR ' | ')
+                            FROM {$productToCategoryTable} p2c
+                            JOIN {$categoryDescriptionTable} cd
+                              ON cd.category_id = p2c.category_id
+                             AND cd.language_id = 1
+                            WHERE p2c.product_id = f.product_id
+                        ), '') AS categories
+                 FROM {$faqTable} f
+                 JOIN {$faqTrackingTable} t ON t.faq_id = f.faq_id
+                 JOIN {$descriptionTable} pd
+                   ON pd.product_id = f.product_id
+                  AND pd.language_id = 1
+                 WHERE f.faq_id = :faq_id AND f.status = 0"
+            );
+            $repairSelect->execute(['faq_id' => $repairFaqId]);
+            $repairDraft = $repairSelect->fetch();
+            if ($repairDraft) {
+                $repairText = buildText(
+                    (string)$repairDraft['name'],
+                    (string)$repairDraft['description'],
+                    (string)$repairDraft['categories'],
+                    0
+                );
+                if ($repairText === null || !isQuestionText($repairText)) {
+                    throw new RuntimeException('Could not build a context-safe question for FAQ repair.');
+                }
+                $repairUpdate = $pdo->prepare(
+                    "UPDATE {$faqTable} SET text = :text, date_modified = NOW()
+                     WHERE faq_id = :faq_id AND status = 0"
+                );
+                $repairUpdate->execute(['text' => $repairText, 'faq_id' => $repairFaqId]);
+                echo sprintf(
+                    "repaired_faq_id=%d length=%d text=%s\n",
+                    $repairFaqId,
+                    mb_strlen($repairText),
+                    $repairText
+                );
+            }
+        }
         if (getenv('REVIEW_DRAFTS_ROUTE_TODAY') === '1') {
             $routeSelect = $pdo->query(
                 "SELECT r.review_id, r.product_id, r.customer_id, r.author, r.text,
@@ -287,7 +356,15 @@ function main(array $argv): int
         }
 
         if (getenv('REVIEW_DRAFTS_REFRESH_TODAY') === '1') {
-            $refreshSelectSql = "SELECT r.review_id, pd.name
+            $refreshSelectSql = "SELECT r.review_id, pd.name, pd.description,
+                       COALESCE((
+                           SELECT GROUP_CONCAT(DISTINCT cd.name ORDER BY cd.name SEPARATOR ' | ')
+                           FROM {$productToCategoryTable} p2c
+                           JOIN {$categoryDescriptionTable} cd
+                             ON cd.category_id = p2c.category_id
+                            AND cd.language_id = 1
+                           WHERE p2c.product_id = r.product_id
+                       ), '') AS categories
                 FROM {$reviewTable} r
                 JOIN {$trackingTable} t ON t.review_id = r.review_id
                 JOIN {$descriptionTable} pd
@@ -305,7 +382,15 @@ function main(array $argv): int
                  WHERE review_id = :review_id AND status = 0"
             );
             foreach ($todayDrafts as $draftIndex => $draft) {
-                $newText = buildText((string)$draft['name'], $draftIndex % 3);
+                $newText = buildText(
+                    (string)$draft['name'],
+                    (string)($draft['description'] ?? ''),
+                    (string)($draft['categories'] ?? ''),
+                    $draftIndex % 3
+                );
+                if ($newText === null) {
+                    continue;
+                }
                 $refreshUpdate->execute([
                     'text' => $newText,
                     'review_id' => (int)$draft['review_id'],
@@ -339,7 +424,15 @@ function main(array $argv): int
         $targetToday = dueCount($now);
         $toCreate = max(0, min(DAILY_LIMIT - $existingToday, $targetToday - $existingToday));
 
-        $productsSql = "SELECT p.product_id, p.viewed, pd.name
+        $productsSql = "SELECT p.product_id, p.viewed, pd.name, pd.description,
+                   COALESCE((
+                       SELECT GROUP_CONCAT(DISTINCT cd.name ORDER BY cd.name SEPARATOR ' | ')
+                       FROM {$productToCategoryTable} p2c
+                       JOIN {$categoryDescriptionTable} cd
+                         ON cd.category_id = p2c.category_id
+                        AND cd.language_id = 1
+                       WHERE p2c.product_id = p.product_id
+                   ), '') AS categories
             FROM {$productTable} p
             JOIN {$descriptionTable} pd
               ON pd.product_id = p.product_id
@@ -361,10 +454,20 @@ function main(array $argv): int
                   AND f.date_added >= CURDATE() - INTERVAL 30 DAY
               )
             ORDER BY p.viewed DESC, p.product_id DESC
-            LIMIT 50";
+            LIMIT 200";
         $productStatement = $pdo->prepare($productsSql);
         $productStatement->execute();
-        $products = $productStatement->fetchAll();
+        $products = array_values(array_filter(
+            $productStatement->fetchAll(),
+            static function (array $product): bool {
+                return buildText(
+                    (string)$product['name'],
+                    (string)$product['description'],
+                    (string)$product['categories'],
+                    0
+                ) !== null;
+            }
+        ));
 
         if ($toCreate > 0 && count($products) < $toCreate) {
             throw new RuntimeException('Not enough eligible viewed products to create drafts.');
@@ -388,7 +491,15 @@ function main(array $argv): int
 
         foreach ($selected as $index => $product) {
             $lengthIndex = ($existingToday + $index) % 3;
-            $text = buildText((string)$product['name'], $lengthIndex);
+            $text = buildText(
+                (string)$product['name'],
+                (string)$product['description'],
+                (string)$product['categories'],
+                $lengthIndex
+            );
+            if ($text === null) {
+                continue;
+            }
             $author = buildAuthor($daySeed, $existingToday + $index);
             $rating = buildRating($daySeed, $existingToday + $index);
             $isQuestion = isQuestionText($text);
