@@ -1,0 +1,7 @@
+config.json
+19.xlsx
+state.json*
+latest-results.*
+dry-run.*
+monitor.lock
+monitor.log
