@@ -5,7 +5,13 @@ import order_notify as n
 
 class OrderTests(unittest.TestCase):
     def order(self, hid):
-        return dict(order_history_id=hid, order_id=123, date_added='2026-09-23 12:34:56', total='100.125', currency_value='2', currency_code='UAH')
+        return dict(order_history_id=hid, order_id=123, date_added='2026-09-23 12:34:56', total='100.125', currency_value='2', currency_code='UAH', is_paid=0)
+
+    def test_payment_labels(self):
+        order=self.order(1)
+        self.assertIn('Оплата: Не сплачене',n.message('prolitech',order))
+        order['is_paid']='1'
+        self.assertIn('Оплата: Сплачене',n.message('prolimax',order))
 
     def test_message_fields_and_currency(self):
         text = n.message('prolitech', self.order(1))

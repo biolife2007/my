@@ -5,3 +5,10 @@ latest-results.*
 dry-run.*
 monitor.lock
 monitor.log
+orders-state.json*
+orders.lock
+orders.log
+feedback-state.json*
+feedback.lock
+feedback.log
+crontab-before-*.txt

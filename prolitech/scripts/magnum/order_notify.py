@@ -38,7 +38,8 @@ def message(site, order, test=False):
             'Сайт: ' + html.escape(SITES[site]) + '\n'
             'Номер: ' + html.escape(str(order['order_id'])) + '\n'
             'Дата: ' + date + '\n'
-            'Сума: ' + amount_text + ' ' + html.escape(currency))
+            'Сума: ' + amount_text + ' ' + html.escape(currency) + '\n'
+            'Оплата: ' + ('Сплачене' if int(order['is_paid']) == 1 else 'Не сплачене'))
 
 
 def process_site(site, state, config, save):
@@ -81,7 +82,7 @@ def main():
             return
         config = json.loads((BASE / 'config.json').read_text(encoding='utf-8'))
         if args.test:
-            demo = {'order_id':'ТЕСТ', 'date_added':datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'total':'0', 'currency_value':'1', 'currency_code':'UAH'}
+            demo = {'order_id':'ТЕСТ', 'date_added':datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'total':'0', 'currency_value':'1', 'currency_code':'UAH', 'is_paid':0}
             for site in SITES:
                 telegram(config, message(site, demo, True))
                 time.sleep(1.1)

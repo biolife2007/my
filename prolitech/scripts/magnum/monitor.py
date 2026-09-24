@@ -115,7 +115,19 @@ def atomic_json(path, data):
 
 
 def telegram(config, text):
-    payload = json.dumps({'chat_id': config['chat_id'], 'text': text, 'parse_mode': 'HTML', 'disable_web_page_preview': True}).encode('utf-8')
+    recipients = list(dict.fromkeys(config.get('chat_ids') or [config['chat_id']]))
+    failed = []
+    for recipient in recipients:
+        try:
+            telegram_one(config, recipient, text)
+        except RuntimeError:
+            failed.append(recipient)
+    if failed:
+        raise RuntimeError('Telegram delivery failed for {} recipient(s); pending alerts retained'.format(len(failed)))
+
+
+def telegram_one(config, recipient, text):
+    payload = json.dumps({'chat_id': recipient, 'text': text, 'parse_mode': 'HTML', 'disable_web_page_preview': True}).encode('utf-8')
     url = 'https://api.telegram.org/bot' + config['bot_token'] + '/sendMessage'
     try:
         req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
